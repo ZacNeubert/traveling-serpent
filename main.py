@@ -5,6 +5,7 @@ import json
 import redis
 import argparse
 import sys
+import tensorflow as tf
 
 from copy import copy, deepcopy
 from random import randint
@@ -12,7 +13,6 @@ from math import sqrt
 from statistics import mean, stdev
 from time import sleep
 
-from learning import learn
 from strategy import *
 from moves import *
 from prettyprint import *
@@ -21,6 +21,10 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--verbose', action='store_true')
 parser.add_argument('--eps', type=float, action='store')
 parser.add_argument('--iters', type=int, action='store', default=1000)
+parser.add_argument('--tf', action='store_true', default=False)
+parser.add_argument('-x', type=int, default=10)
+parser.add_argument('-y', type=int, default=10)
+parser.add_argument('-c', type=int, default=5)
 cargs = parser.parse_args()
 
 
@@ -43,7 +47,7 @@ class Player:
             if cargs.verbose:
                 print(new_r, new_c, m.reward)
             return m.reward
-        else: #Out of bounds
+        else:  # Out of bounds
             if cargs.verbose:
                 print('Out Of Bounds')
             return 100 * m.reward  # Penalty for leaving the board
@@ -69,8 +73,9 @@ class City:
 class Grid:
     EMPTY = 0
     PLAYER = 1
-    OBSERVED = 2
-    CITY = 3
+    CITY = 2
+    OBSERVED = 3
+
     COLORGUIDE = {
         0: lambda j: str(j),
         1: lambda j: asYellow(str(j)),
@@ -123,7 +128,32 @@ class Grid:
         return '\n'.join([''.join([self.COLORGUIDE[j](j) for j in col]) for col in self.grid])
 
     def get_state(self):
-        return ''.join([''.join([str(j) for j in col]) for col in self.grid])
+        return grid_to_cat_columns(self.grid)
+        #indices, values, shape = grid_to_sparse_tensor(self.grid)
+        #return {'indices': indices, 'values': values, 'shape': shape}
+
+def flatten(twod):
+    return [j for i in twod for j in i]
+
+def grid_to_cat_columns(grid):
+    return [[[1 if i == x else 0 for i in range(3)] for x in y] for y in grid]
+
+
+def cat_columns_to_sparse_tensor(cat_cols):
+    indices = []
+    for i, row in enumerate(cat_cols):
+        for j, cat_col in enumerate(row):
+            for k, value in enumerate(cat_col):
+                if value:
+                    indices.append([j, i, k])  # Me and google have disagreements about 2D arrays
+    values = flatten(flatten([[[v for v in cat_col if v] for cat_col in row] for row in cat_cols]))
+    shape = [len(cat_cols), len(cat_cols[0]), len(cat_cols[0][0])]
+    return indices, values, shape
+
+
+def grid_to_sparse_tensor(grid):
+    cat_cols = grid_to_cat_columns(grid)
+    return cat_columns_to_sparse_tensor(cat_cols)
 
 
 class Output:
@@ -146,47 +176,52 @@ class Output:
 
 
 if __name__ == '__main__':
+    from learning import learn
+
     total_rewards = []
     total_moves = []
     i = 0
     while True:
-        g = Grid(10, 10, 5)
+        g = Grid(cargs.x, cargs.y, cargs.c)
         city = g.random_city()
-        player = Player(city.r, city.c, g, learn)
+        for _ in range(100):
+            real_grid = deepcopy(g)
+            player = Player(city.r, city.c, real_grid, learn)
 
-        total_reward = 0
-        total_move = 0
-        while not player.grid.solved():
-            r = learn(player, cargs)
-            total_reward += r
-            total_move += 1
+            total_reward = 0
+            total_move = 0
+            while not player.grid.solved():
+                r = learn(player, cargs)
+                total_reward += r
+                total_move += 1
+                if cargs.verbose:
+                    print(str(player.grid) + '\n')
+                    sleep(.5)
+
             if cargs.verbose:
-                print(str(player.grid) + '\n')
+                print('WIN')
+                print(total_move)
+                print(total_reward)
 
-        if cargs.verbose:
-            print('WIN')
-            print(total_move)
-            print(total_reward)
+            total_rewards.append(total_reward)
+            total_moves.append(total_move)
+            if i % 1000 == 0 and i > 1:
+                print(Output(total_rewards, total_moves))
+                sys.stdout.flush()
+                total_rewards = []
+                total_moves = []
 
-        total_rewards.append(total_reward)
-        total_moves.append(total_move)
-        if i % 1000 == 0 and i > 1:
-            print(Output(total_rewards, total_moves))
-            sys.stdout.flush()
-            total_rewards = []
-            total_moves = []
+            # while not g.solved():
+            #    old_grid = copy(g)
+            #    reward, action = player.move_strat(cargs)
+            #    if len(g.cities) < len(old_grid.cities):
+            #        print(len(g.cities))
+            #        reward += 50
+            #    total_reward += reward
+            #    if cargs.verbose:
+            #        print('{} cities remaining'.format(len(g.cities)))
+            #        sleep(.05)
 
-        # while not g.solved():
-        #    old_grid = copy(g)
-        #    reward, action = player.move_strat(cargs)
-        #    if len(g.cities) < len(old_grid.cities):
-        #        print(len(g.cities))
-        #        reward += 50
-        #    total_reward += reward
-        #    if cargs.verbose:
-        #        print('{} cities remaining'.format(len(g.cities)))
-        #        sleep(.05)
-
-        i += 1
-        if i > cargs.iters > 0:
-            break
+            i += 1
+            if i > cargs.iters > 0:
+                break

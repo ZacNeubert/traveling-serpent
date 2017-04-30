@@ -7,6 +7,8 @@ from time import sleep
 import redis
 
 # Redis
+from main import Grid
+
 r = redis.StrictRedis(host='localhost', port=6379, db=0)
 
 
@@ -29,8 +31,14 @@ def get_float(key):
         return 0.5
 
 
+def get_action_array(a):
+    return [1 if a == i else 0 for i in list(range(9))]
+
+
 def get_key(s, a):
-    return s.get_state() + str(a)
+    if isinstance(s, Grid):
+        s = s.get_state()
+    return json.dumps({'grid': s.get_state(), 'move': get_action_array(a)}, sort_keys=True)
 
 
 # region Queues
@@ -48,18 +56,38 @@ def len_request():
     return r.llen(RQK)
 
 
-def enqueue_request(state):
-    r.rpush(RQK, state)
+def enqueue_request(key):
+    r.rpush(RQK, key)
 
 
-def get_or_enqueue(state, sleep_time=.1):
+def get_or_enqueue_range(grid, moves, sleep_time=.05):
+    print('Asking for {} states'.format(len(moves)))
+    results = [r.get(get_key(grid, move)) for move in moves]
+    if None in results:
+        for move, result in zip(moves, results):
+            if result is None:
+                continue
+            else:
+                enqueue_request(get_key(grid, move))
+    while None in results:
+        for i, move in enumerate(moves):
+            if results[i] is None:
+                result = r.get(get_key(grid, move))
+                if not result is None:
+                    results[i] = float(result)
+        sleep(sleep_time)
+    return results
+
+
+def get_or_enqueue(state, sleep_time=.05):
+    print('Asking for state')
     result = r.get(state)
     if not result:
         enqueue_request(state)
     while not result:
         result = r.get(state)
         sleep(sleep_time)
-    return result
+    return float(result)
 
 
 def dequeue_request():
@@ -73,7 +101,7 @@ def dequeue_n_request(n=50):
         if not item:
             return items
         items.append(item.decode('UTF-8'))
-    return items
+    return [json.loads(it) for it in items]
 
 
 def delete_train():
@@ -81,58 +109,24 @@ def delete_train():
 
 
 def len_train():
-    return r.llen(TQK)
+    return r.hlen(TQK)
 
 
-def enqueue_train(state, q):
-    r.rpush(TQK, json.dumps({'state': state, 'q': q}))
+def enqueue_train(state, action, q):
+    if isinstance(state, Grid):
+        state = state.get_state()
+    key = get_key(state, action)
+    r.hset(TQK, key, q)
 
 
-def dequeue_train():
-    obj = json.loads(r.lpop(TQK).decode('UTF-8'))
-    return obj['state'], obj['q']
-
-
-def dequeue_n_train(n=50):
-    items = []
-    for _ in range(n):
-        item = r.lpop(TQK)
-        if not item:
-            return items
-        items.append(json.loads(item.decode('UTF-8')))
-    return items
-
-
-def process_queues(process_requests, process_training, endc):
-    while True:
-        requests = dequeue_n_request()
-        process_requests(requests)
-        training = dequeue_n_train()
-        process_training(training)
-        if endc(len_request(), len_train()):
-            return
-
-
-def print_all(li):
-    for l in li:
-        print(l)
-
-
-def print_print_queues():
-    process_queues(print_all, print_all, lambda re, tr: re == tr == 0)
-
-
-def nothing(n):
-    pass
-
-
-def clear_queues():
-    process_queues(nothing, nothing, lambda re, tr: re == tr == 0)
+def retrieve_all_train():
+    train = r.hgetall(TQK)
+    train_deserialized = [{'state': json.loads(key.decode('UTF-8')), 'q': float(val)} for key, val in train.items() if len(key) > 1000]
+    return train_deserialized  # Check format
 
 
 def set_q_value(state, q, expire=90):
-    r.set(state, q)
-    r.expire(state, expire)
+    r.set(state, q, expire)
 
 
 # endregion
@@ -157,8 +151,6 @@ if __name__ == '__main__':
     assert type(result[0]) is dict
     assert result[0]['state'] == 'abc'
     assert result[0]['q'] == 123
-
-    print('You good brah')
 
     for s in range(100):
         enqueue_request(str(s))

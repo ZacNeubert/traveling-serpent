@@ -1,85 +1,161 @@
+import argparse
+import datetime
+
 import tensorflow as tf
 import numpy as np
+import time
+import pickle
 
-# This code was taken and adapted from the tensorflow expert tutorial at https://www.tensorflow.org/get_started/mnist/pros
+from tensorflow.contrib.layers import sparse_column_with_keys, one_hot_column, embedding_column
+from tensorflow.contrib.learn import DNNRegressor
 
-from tensorflow.examples.tutorials.mnist import input_data
+from data import *
+from moves import MOVES
+from main import flatten
 
-
-def weight_variable(shape):
-    initial = tf.truncated_normal(shape, stddev=0.1)
-    return tf.Variable(initial)
-
-
-def bias_variable(shape):
-    initial = tf.constant(0.1, shape=shape)
-    return tf.Variable(initial)
-
-
-def conv2d(x, W):
-    return tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding='SAME')
+#parser = argparse.ArgumentParser()
+#parser.add_argument('--save-to', action='store', default=None)
+#parser.add_argument('--load-from', action='store', default=None)
+#args = parser.parse_args()
 
 
-def max_pool_2x2(x):
-    return tf.nn.max_pool(x, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
+def send_to_redis(fulfilled):
+    for request, result in fulfilled.items():
+        set_q_value(request, result)
 
+
+def grid_square_name(row, col):
+    return 'GridSquare_row{}_col{}'.format(row, col),
+
+
+def sparse_feature_cols(rows, cols):
+    sparse_cols = []
+    for i in range(rows):
+        for j in range(cols):
+            sparse_cols.append(
+                sparse_column_with_keys(
+                    column_name=grid_square_name(i, j),
+                    keys=[0, 1, 2],
+                    # keys=['Empty', 'Player', 'City'],
+                    dtype=tf.int32
+                ))
+    return sparse_cols
+
+
+def one_hot_for_move_feature_col():
+    return [sparse_column_with_keys(
+        column_name='Move',
+        keys=[i for i, m in enumerate(MOVES.ALL)],
+        dtype=tf.int32
+    )]
+
+
+def as_sparse_tensor(li):
+    dense_shape = [0, len(li)]
+    indices = [[0, i] for i, v in enumerate(li) if v]
+    values = [1]
+    return tf.SparseTensor(dense_shape=dense_shape, indices=indices, values=values)
+
+
+def dense_to_sparse(li):
+    a = np.array(li)
+    with tf.Session() as sess:
+        a_t = tf.constant(a)
+        idx = tf.where(tf.not_equal(a_t, 0))
+        # Use tf.shape(a_t, out_type=tf.int64) instead of a_t.get_shape() if tensor shape is dynamic
+        sparse = tf.SparseTensor(idx, tf.gather_nd(a_t, idx), a_t.get_shape())
+        dense = tf.sparse_tensor_to_dense(sparse)
+        b = sess.run(dense)
+        assert np.all(a == b)
+    return sparse
+
+
+CURRENT_REQUESTS = []
+
+
+def request_input_fn():
+    global CURRENT_REQUESTS
+
+    requests = dequeue_n_request()
+
+    if not requests:
+        return None, None
+
+    json_requests = [json.loads(state) for state in requests if len(state) > 1000]
+    CURRENT_REQUESTS = json_requests
+
+    grids = [st['grid'] for st in json_requests]
+    moves = [st['move'] for st in json_requests]
+    flat_grids = [flatten([flatten(row) for row in grid]) for grid in grids]
+
+    x_li = [grid + move for grid, move in zip(flat_grids, moves)]
+    x = tf.constant(x_li)
+
+    return x, None
+
+
+def training_input_fn():
+    redis_train = retrieve_all_train()
+    states = [tr['state'] for tr in redis_train]
+    qs = tf.constant([tr['q'] for tr in redis_train])
+
+    grids = [st['grid'] for st in states]
+    moves = [st['move'] for st in states]
+    flat_grids = [flatten([flatten(row) for row in grid]) for grid in grids]
+
+    x_li = [grid + move for grid, move in zip(flat_grids, moves)]
+    x = tf.constant(x_li)
+    y = qs
+
+    return x, y
+
+
+#def datestr():
+#    return datetime.datetime.now().strftime('%Y%m%d %H:%M:%S.%f %z')
+#
+#
+#def save_estimator(sess, est):
+#    global args
+#    save_string = args.save_as or datestr()
+#    tf.train.Saver().save(sess)
+#
+#
+#def load_estimator():
+#    global args
+#    load_string = args.load_from
+#
+#    return pickle.load(load_string)
+
+
+TRAIN_EVERY = 1800  # 30 minutes
+TRAINING_ITERATIONS = 60000
+
+TRAINING_DATA = {}
+
+HIDDEN_UNITS = [309, 103, 10]
+# HIDDEN_UNITS = [309, 100, 50]
+FEATURE_COLUMNS = [tf.contrib.layers.real_valued_column("", dimension=309)]
 
 if __name__ == '__main__':
-    mnist = input_data.read_data_sets('MNIST_data', one_hot=True)
+    estimator = None
 
-    x = tf.placeholder(tf.float32, shape=[None, 784])  # Input
-    y_ = tf.placeholder(tf.float32, shape=[None, 10])  # Output
+    tf.logging.set_verbosity(tf.logging.INFO)
 
-    W = tf.Variable(tf.zeros([784, 10]))
-    b = tf.Variable(tf.zeros([10]))
+    last_train_date = time.time()
+    with tf.Session(config=tf.ConfigProto(log_device_placement=True)).as_default():
+        while True:
+            if time.time() - last_train_date > TRAIN_EVERY or estimator is None:
+                estimator = DNNRegressor(
+                    feature_columns=FEATURE_COLUMNS,
+                    hidden_units=HIDDEN_UNITS
+                )
 
-    x_image = tf.reshape(x, [-1, 28, 28, 1])
+                estimator.fit(input_fn=training_input_fn, max_steps=TRAINING_ITERATIONS)
+                tf.get_default_session()
+                last_train_date = time.time()
 
-    # First Layer
-    W_conv1 = weight_variable([5, 5, 1, 32])
-    b_conv1 = bias_variable([32])
-
-    h_conv1 = tf.nn.relu(conv2d(x_image, W_conv1) + b_conv1)
-    h_pool1 = max_pool_2x2(h_conv1)
-
-    # Second Layer
-    W_conv2 = weight_variable([5, 5, 32, 64])
-    b_conv2 = bias_variable([64])
-
-    h_conv2 = tf.nn.relu(conv2d(h_pool1, W_conv2) + b_conv2)
-    h_pool2 = max_pool_2x2(h_conv2)
-
-    # Densely Connected Layer
-    W_fc1 = weight_variable([7 * 7 * 64, 1024])
-    b_fc1 = bias_variable([1024])
-
-    h_pool2_flat = tf.reshape(h_pool2, [-1, 7 * 7 * 64])
-    h_fc1 = tf.nn.relu(tf.matmul(h_pool2_flat, W_fc1) + b_fc1)
-
-    # Dropout (Turns some neurons "off" to reduce overfitting)
-    keep_prob = tf.placeholder(tf.float32)
-    h_fc1_drop = tf.nn.dropout(h_fc1, keep_prob)
-
-    # Readout Layer (output, ya dumb shit)
-    W_fc2 = weight_variable([1024, 10])
-    b_fc2 = bias_variable([10])
-
-    y_conv = tf.matmul(h_fc1_drop, W_fc2) + b_fc2
-
-    sess = tf.Session()
-    with sess.as_default():
-        cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=y_, logits=y_conv))
-        train_step = tf.train.AdamOptimizer(1e-4).minimize(cross_entropy)
-        correct_prediction = tf.equal(tf.argmax(y_conv, 1), tf.argmax(y_, 1))
-        accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
-
-        tf.global_variables_initializer().run()
-
-        for i in range(20000):
-            batch = mnist.train.next_batch(50)
-            if i % 100 == 0:
-                train_accuracy = accuracy.eval(feed_dict={x: batch[0], y_: batch[1], keep_prob: 1.0})
-                print("step {}, training accuracy {}".format(i, train_accuracy))
-            train_step.run(feed_dict={x: batch[0], y_: batch[1], keep_prob: 0.5})
-
-        print(accuracy.eval(feed_dict={x: mnist.test.images, y_: mnist.test.labels, keep_prob: 1.0}))
+            if len_request():
+                results = list(estimator.predict_scores(input_fn=request_input_fn))
+                fulfilled = {json.dumps(req, sort_keys=True): res for req, res in zip(CURRENT_REQUESTS, results)}
+                send_to_redis(fulfilled)
+                print('Fullfilled {} requests'.format(len(results)))
