@@ -22,12 +22,13 @@ def get_int(key):
     return int(result) if result else None
 
 
-def get_float(key):
+def get_float(key, no_set=False):
     result = r.get(key)
     if result:
         return float(result)
     else:
-        r.set(key, 0.5)
+        if not no_set:
+            r.set(key, 0.5)
         return 0.5
 
 
@@ -62,18 +63,14 @@ def enqueue_request(key):
 
 def get_or_enqueue_range(grid, moves, sleep_time=.05):
     print('Asking for {} states'.format(len(moves)))
-    results = [r.get(get_key(grid, move)) for move in moves]
-    if None in results:
-        for move, result in zip(moves, results):
-            if result is None:
-                continue
-            else:
-                enqueue_request(get_key(grid, move))
+    results = [None for move in moves]
+    for move in moves:
+        enqueue_request(get_key(grid, move))
     while None in results:
         for i, move in enumerate(moves):
             if results[i] is None:
                 result = r.get(get_key(grid, move))
-                if not result is None:
+                if result is not None:
                     results[i] = float(result)
         sleep(sleep_time)
     return results
@@ -121,7 +118,7 @@ def enqueue_train(state, action, q):
 
 def retrieve_all_train():
     train = r.hgetall(TQK)
-    train_deserialized = [{'state': json.loads(key.decode('UTF-8')), 'q': float(val)} for key, val in train.items() if len(key) > 1000]
+    train_deserialized = [{'state': json.loads(key.decode('UTF-8')), 'q': float(val)} for key, val in train.items() if len(key) == 600] # 600 is the 7x7 grids
     return train_deserialized  # Check format
 
 

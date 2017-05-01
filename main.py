@@ -1,27 +1,21 @@
 #!/usr/bin/python3
-import datetime
-import json
 
-import redis
 import argparse
 import sys
-import tensorflow as tf
-
-from copy import copy, deepcopy
-from random import randint
-from math import sqrt
-from statistics import mean, stdev
+from copy import deepcopy
 from time import sleep
 
-from strategy import *
 from moves import *
+from output import Output
 from prettyprint import *
+from strategy import *
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--verbose', action='store_true')
 parser.add_argument('--eps', type=float, action='store')
 parser.add_argument('--iters', type=int, action='store', default=1000)
 parser.add_argument('--tf', action='store_true', default=False)
+parser.add_argument('--seed', action='store_true', default=False)
 parser.add_argument('-x', type=int, default=10)
 parser.add_argument('-y', type=int, default=10)
 parser.add_argument('-c', type=int, default=5)
@@ -156,25 +150,6 @@ def grid_to_sparse_tensor(grid):
     return cat_columns_to_sparse_tensor(cat_cols)
 
 
-class Output:
-    def __init__(self, total_rewards, total_moves):
-        dt = datetime.datetime.now()
-        self.time = dt.strftime('%Y%m%d %H:%M:%S.%f %z')
-        self.timestamp = dt.timestamp()
-        self.length = len(total_moves)
-        self.mean_reward = mean(total_rewards)
-        self.stdev_reward = stdev(total_rewards)
-        self.min_reward = min(total_rewards)
-        self.max_reward = max(total_rewards)
-        self.mean_move = mean(total_moves)
-        self.stdev_move = stdev(total_moves)
-        self.min_move = min(total_moves)
-        self.max_move = max(total_moves)
-
-    def __str__(self):
-        return json.dumps(self.__dict__)
-
-
 if __name__ == '__main__':
     from learning import learn
 
@@ -184,44 +159,42 @@ if __name__ == '__main__':
     while True:
         g = Grid(cargs.x, cargs.y, cargs.c)
         city = g.random_city()
-        for _ in range(100):
-            real_grid = deepcopy(g)
-            player = Player(city.r, city.c, real_grid, learn)
 
-            total_reward = 0
-            total_move = 0
-            while not player.grid.solved():
-                r = learn(player, cargs)
-                total_reward += r
-                total_move += 1
-                if cargs.verbose:
-                    print(str(player.grid) + '\n')
-                    sleep(.5)
+        player = Player(city.r, city.c, g, learn)
 
+        total_reward = 0
+        total_move = 0
+        while not player.grid.solved():
+            r = learn(player, cargs)
+            total_reward += r
+            total_move += 1
             if cargs.verbose:
-                print('WIN')
-                print(total_move)
-                print(total_reward)
+                print(str(player.grid) + '\n')
+                sleep(.5)
 
-            total_rewards.append(total_reward)
-            total_moves.append(total_move)
-            if i % 1000 == 0 and i > 1:
-                print(Output(total_rewards, total_moves))
-                sys.stdout.flush()
-                total_rewards = []
-                total_moves = []
+        if cargs.verbose:
+            print('WIN')
+            print(total_move)
+            print(total_reward)
 
-            # while not g.solved():
-            #    old_grid = copy(g)
-            #    reward, action = player.move_strat(cargs)
-            #    if len(g.cities) < len(old_grid.cities):
-            #        print(len(g.cities))
-            #        reward += 50
-            #    total_reward += reward
-            #    if cargs.verbose:
-            #        print('{} cities remaining'.format(len(g.cities)))
-            #        sleep(.05)
+        total_rewards.append(total_reward)
+        total_moves.append(total_move)
+        if i % 100 == 0 and i > 1:
+            print(Output(total_rewards, total_moves))
+            total_rewards = []
+            total_moves = []
 
-            i += 1
-            if i > cargs.iters > 0:
-                break
+        # while not g.solved():
+        #    old_grid = copy(g)
+        #    reward, action = player.move_strat(cargs)
+        #    if len(g.cities) < len(old_grid.cities):
+        #        print(len(g.cities))
+        #        reward += 50
+        #    total_reward += reward
+        #    if cargs.verbose:
+        #        print('{} cities remaining'.format(len(g.cities)))
+        #        sleep(.05)
+
+        i += 1
+        if i > cargs.iters > 0:
+            break

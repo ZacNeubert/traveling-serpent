@@ -13,12 +13,6 @@ from data import *
 from moves import MOVES
 from main import flatten
 
-#parser = argparse.ArgumentParser()
-#parser.add_argument('--save-to', action='store', default=None)
-#parser.add_argument('--load-from', action='store', default=None)
-#args = parser.parse_args()
-
-
 def send_to_redis(fulfilled):
     for request, result in fulfilled.items():
         set_q_value(request, result)
@@ -81,7 +75,7 @@ def request_input_fn():
     if not requests:
         return None, None
 
-    json_requests = [json.loads(state) for state in requests if len(state) > 1000]
+    json_requests = [json.loads(state) for state in requests if len(state) == 600]
     CURRENT_REQUESTS = json_requests
 
     grids = [st['grid'] for st in json_requests]
@@ -110,31 +104,13 @@ def training_input_fn():
     return x, y
 
 
-#def datestr():
-#    return datetime.datetime.now().strftime('%Y%m%d %H:%M:%S.%f %z')
-#
-#
-#def save_estimator(sess, est):
-#    global args
-#    save_string = args.save_as or datestr()
-#    tf.train.Saver().save(sess)
-#
-#
-#def load_estimator():
-#    global args
-#    load_string = args.load_from
-#
-#    return pickle.load(load_string)
-
-
-TRAIN_EVERY = 1800  # 30 minutes
-TRAINING_ITERATIONS = 60000
+TRAIN_EVERY = 90
+TRAINING_ITERATIONS = 150
 
 TRAINING_DATA = {}
 
-HIDDEN_UNITS = [309, 103, 10]
-# HIDDEN_UNITS = [309, 100, 50]
-FEATURE_COLUMNS = [tf.contrib.layers.real_valued_column("", dimension=309)]
+HIDDEN_UNITS = [156, 52, 26]
+FEATURE_COLUMNS = [tf.contrib.layers.real_valued_column("", dimension=156)]
 
 if __name__ == '__main__':
     estimator = None

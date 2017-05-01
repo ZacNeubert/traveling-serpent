@@ -27,12 +27,12 @@ def learn(player, cargs=None):
 
     s_prime = player.grid
     q = Q(s, a, cargs.tf)
-    max_q = max(all_Q(s_prime, cargs.tf))
+    max_q = max(all_Q(s_prime, cargs))
     new_q = q + ALPHA * (r + DISCOUNT * max_q - q)
     if cargs and cargs.tf:
         enqueue_train(s, a, new_q)
     else:
-        setQ(s, a, new_q, cargs.tf)
+        setQ(s, a, new_q, cargs)
 
     if cargs.verbose:
         print('Q Change: {}, {}, {}'.format(q, new_q, new_q - q))
@@ -49,7 +49,7 @@ def eps_choice(player, eps, s, cargs=None):
         if cargs.verbose:
             print('Q-based')
 
-        qvals = all_Q(s, cargs.tf)
+        qvals = all_Q(s, cargs)
 
         choice = qvals.index(max(qvals))
         if cargs.verbose:
@@ -58,17 +58,19 @@ def eps_choice(player, eps, s, cargs=None):
         return choice
 
 
-def all_Q(s, tf):
-    if tf:
+def all_Q(s, cargs):
+    if cargs.tf:
         #qvals = [get_or_enqueue(get_key(s, i)) for i in range(0, 8)]
         qvals = get_or_enqueue_range(s, list(range(0, 8)))
+    elif cargs.seed:
+        qvals = [get_float(get_key(s, i), no_set=True) for i in range(0, 8)]
     else:
         qvals = [get_float(get_key(s, i)) for i in range(0, 8)]
     return qvals
 
 
-def labeled_all_Q(s, tf):
-    qvals = all_Q(s, tf)
+def labeled_all_Q(s, cargs):
+    qvals = all_Q(s, cargs)
     lab = []
     for i, q in enumerate(qvals):
         lab.append((MOVES.ALL[i].name, q))
@@ -84,8 +86,9 @@ def Q(s, a, tf):
         return q
 
 
-def setQ(s, a, q, tf):
-    if not tf:
+def setQ(s, a, q, cargs):
+    if not cargs.tf:
         key = get_key(s, a)
-        r.set(key, q)
+        if not cargs.seed:
+            r.set(key, q)
     enqueue_train(s, a, q=q)
