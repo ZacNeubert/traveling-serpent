@@ -16,6 +16,7 @@ parser.add_argument('--eps', type=float, action='store')
 parser.add_argument('--iters', type=int, action='store', default=1000)
 parser.add_argument('--tf', action='store_true', default=False)
 parser.add_argument('--seed', action='store_true', default=False)
+parser.add_argument('--static-method', action='store_true', default=False)
 parser.add_argument('-x', type=int, default=10)
 parser.add_argument('-y', type=int, default=10)
 parser.add_argument('-c', type=int, default=5)
@@ -160,17 +161,32 @@ if __name__ == '__main__':
         g = Grid(cargs.x, cargs.y, cargs.c)
         city = g.random_city()
 
-        player = Player(city.r, city.c, g, learn)
+        if cargs.static_method:
+            player = Player(city.r, city.c, g, nearest_city)
+        else:
+            player = Player(city.r, city.c, g, learn)
 
         total_reward = 0
         total_move = 0
-        while not player.grid.solved():
-            r = learn(player, cargs)
-            total_reward += r
-            total_move += 1
-            if cargs.verbose:
-                print(str(player.grid) + '\n')
-                sleep(.5)
+
+        if cargs.static_method:
+            while not g.solved():
+                old_grid = deepcopy(g)
+                reward, action = player.move_strat(cargs)
+                total_move += 1
+                total_reward += reward
+                if cargs.verbose:
+                    print('{} cities remaining'.format(len(g.cities)))
+                    print(g)
+                    sleep(.5)
+        else:
+            while not player.grid.solved():
+                r = learn(player, cargs)
+                total_reward += r
+                total_move += 1
+                if cargs.verbose:
+                    print(str(player.grid) + '\n')
+                    sleep(.5)
 
         if cargs.verbose:
             print('WIN')
@@ -183,17 +199,8 @@ if __name__ == '__main__':
             print(Output(total_rewards, total_moves))
             total_rewards = []
             total_moves = []
-
-        # while not g.solved():
-        #    old_grid = copy(g)
-        #    reward, action = player.move_strat(cargs)
-        #    if len(g.cities) < len(old_grid.cities):
-        #        print(len(g.cities))
-        #        reward += 50
-        #    total_reward += reward
-        #    if cargs.verbose:
-        #        print('{} cities remaining'.format(len(g.cities)))
-        #        sleep(.05)
+        print('{} out of {}'.format(i, cargs.iters))
+        sys.stdout.flush()
 
         i += 1
         if i > cargs.iters > 0:

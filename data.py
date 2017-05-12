@@ -61,11 +61,16 @@ def enqueue_request(key):
     r.rpush(RQK, key)
 
 
-def get_or_enqueue_range(grid, moves, sleep_time=.05):
-    print('Asking for {} states'.format(len(moves)))
+def get_or_enqueue_range(grid, moves, sleep_time=.01):
+    #print('Asking for {} states'.format(len(moves)))
     results = [None for move in moves]
-    for move in moves:
-        enqueue_request(get_key(grid, move))
+    for i, move in enumerate(moves):
+        key = get_key(grid, move)
+        result = r.get(key)
+        if result is not None:
+            results[i] = float(result)
+        else:
+            enqueue_request(get_key(grid, move))
     while None in results:
         for i, move in enumerate(moves):
             if results[i] is None:
@@ -76,8 +81,8 @@ def get_or_enqueue_range(grid, moves, sleep_time=.05):
     return results
 
 
-def get_or_enqueue(state, sleep_time=.05):
-    print('Asking for state')
+def get_or_enqueue(state, sleep_time=.01):
+    #print('Asking for state')
     result = r.get(state)
     if not result:
         enqueue_request(state)
@@ -91,7 +96,7 @@ def dequeue_request():
     return r.lpop(RQK).decode('UTF-8')
 
 
-def dequeue_n_request(n=50):
+def dequeue_n_request(n=50000):
     items = []
     for _ in range(n):
         item = r.lpop(RQK)
@@ -118,7 +123,7 @@ def enqueue_train(state, action, q):
 
 def retrieve_all_train():
     train = r.hgetall(TQK)
-    train_deserialized = [{'state': json.loads(key.decode('UTF-8')), 'q': float(val)} for key, val in train.items() if len(key) == 600] # 600 is the 7x7 grids
+    train_deserialized = [{'state': json.loads(key.decode('UTF-8')), 'q': float(val)} for key, val in train.items()]
     return train_deserialized  # Check format
 
 

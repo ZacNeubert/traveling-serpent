@@ -71,15 +71,18 @@ def request_input_fn():
     global CURRENT_REQUESTS
 
     requests = dequeue_n_request()
-
     if not requests:
         return None, None
 
-    json_requests = [json.loads(state) for state in requests if len(state) == 600]
-    CURRENT_REQUESTS = json_requests
+    CURRENT_REQUESTS = requests
 
-    grids = [st['grid'] for st in json_requests]
-    moves = [st['move'] for st in json_requests]
+    for i, req in enumerate(requests):
+        if isinstance(requests[i], str):
+            requests[i] = json.loads(requests[i])
+
+
+    grids = [st['grid'] for st in requests]
+    moves = [st['move'] for st in requests]
     flat_grids = [flatten([flatten(row) for row in grid]) for grid in grids]
 
     x_li = [grid + move for grid, move in zip(flat_grids, moves)]
@@ -104,13 +107,14 @@ def training_input_fn():
     return x, y
 
 
-TRAIN_EVERY = 90
-TRAINING_ITERATIONS = 150
+TRAIN_EVERY = 60000000000000000
+TRAINING_ITERATIONS = 99
+INCREMENTAL_TRAINING = 50000
 
 TRAINING_DATA = {}
 
-HIDDEN_UNITS = [156, 52, 26]
-FEATURE_COLUMNS = [tf.contrib.layers.real_valued_column("", dimension=156)]
+HIDDEN_UNITS = [84, 30, 15]
+FEATURE_COLUMNS = [tf.contrib.layers.real_valued_column("", dimension=84)]
 
 if __name__ == '__main__':
     estimator = None
@@ -118,17 +122,18 @@ if __name__ == '__main__':
     tf.logging.set_verbosity(tf.logging.INFO)
 
     last_train_date = time.time()
+
     with tf.Session(config=tf.ConfigProto(log_device_placement=True)).as_default():
         while True:
             if time.time() - last_train_date > TRAIN_EVERY or estimator is None:
-                estimator = DNNRegressor(
-                    feature_columns=FEATURE_COLUMNS,
-                    hidden_units=HIDDEN_UNITS
-                )
-
-                estimator.fit(input_fn=training_input_fn, max_steps=TRAINING_ITERATIONS)
-                tf.get_default_session()
-                last_train_date = time.time()
+                if not estimator:
+                    estimator = DNNRegressor(
+                        feature_columns=FEATURE_COLUMNS,
+                        hidden_units=HIDDEN_UNITS
+                    )
+                    estimator.fit(input_fn=training_input_fn, max_steps=INCREMENTAL_TRAINING)
+                    tf.get_default_session()
+                    last_train_date = time.time()
 
             if len_request():
                 results = list(estimator.predict_scores(input_fn=request_input_fn))
